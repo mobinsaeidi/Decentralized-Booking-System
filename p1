@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract DecentralizedBookingSystem {
+    struct Booking {
+        address user;
+        uint256 startHour;
+        uint256 endHour;
+        bool isActive;
+    }
+
+    address public owner;
+    uint256 public bookingCounter;
+    uint256 public pricePerHour = 0.01 ether;
+    uint256 public maxBookingDuration = 168; // 7 days in hours
+
+    mapping(uint256 => Booking) public bookings;
+    mapping(uint256 => bool) public hourlySlots;
+
+    event BookingCreated(uint256 bookingId, address user, uint256 startHour, uint256 endHour);
+    event BookingCancelled(uint256 bookingId);
+    event Withdrawn(address to, uint256 amount);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can call this");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function createBooking(uint256 _startTimestamp, uint256 _endTimestamp) external payable {
+        require(_startTimestamp < _endTimestamp, "Invalid time range");
+        require(_startTimestamp > block.timestamp, "Start must be in future");
+
+        uint256 startHour = _startTimestamp / 1 hours;
+        uint256 endHour = _endTimestamp / 1 hours;
+        uint256 duration = endHour - startHour;
+
+        require(duration <= maxBookingDuration, "Exceeds max booking duration");
+
+        for (uint256 i = startHour; i <= endHour; i++) {
+            require(!hourlySlots[i], "Time slot not available");
+        }
+
+        uint256 totalPrice = duration * pricePerHour;
+        require(msg.value >= totalPrice, "Insufficient payment");
+
+        bookings[bookingCounter] = Booking({
+            user: msg.sender,
+            startHour: startHour,
+            endHour: endHour,
+            isActive: true
+        });
+
+        for (uint256 i = startHour; i <= endHour; i++) {
+            hourlySlots[i] = true;
+        }
+
+        emit BookingCreated(bookingCounter, msg.sender, startHour, endHour);
+        bookingCounter++;
+    }
+
+    function cancelBooking(uint256 _bookingId) external {
+        Booking storage booking = bookings[_bookingId];
+
+        require(booking.isActive, "Booking inactive");
+        require(booking.user == msg.sender, "Not your booking");
+        require(block.timestamp < booking.startHour * 1 hours, "Booking already started");
+
+        booking.isActive = false;
+
+        for (uint256 i = booking.startHour; i <= booking.endHour; i++) {
+            hourlySlots[i] = false;
+        }
+
+        emit BookingCancelled(_bookingId);
+    }
+
+    function isTimeSlotAvailable(uint256 _startTimestamp, uint256 _endTimestamp) external view returns (bool) {
+        uint256 startHour = _startTimestamp / 1 hours;
+        uint256 endHour = _endTimestamp / 1 hours;
+
+        for (uint256 i = startHour; i <= endHour; i++) {
+            if (hourlySlots[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function getBooking(uint256 _bookingId) external view returns (address, uint256, uint256, bool) {
+        Booking memory b = bookings[_bookingId];
+        return (b.user, b.startHour * 1 hours, b.endHour * 1 hours, b.isActive);
+    }
+
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No funds");
+        payable(owner).transfer(balance);
+        emit Withdrawn(owner, balance);
+    }
+
+    function setPricePerHour(uint256 _price) external onlyOwner {
+        pricePerHour = _price;
+    }
+
+    function setMaxBookingDuration(uint256 _hours) external onlyOwner {
+        maxBookingDuration = _hours;
+    }
+}
